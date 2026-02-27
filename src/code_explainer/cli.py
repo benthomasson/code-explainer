@@ -821,5 +821,30 @@ def _run_general_topic(topic, model, output_dir, repo_path):
     click.echo(result)
 
 
+@cli.command("install-skill")
+@click.option(
+    "--skill-dir",
+    type=click.Path(),
+    default=None,
+    help="Target directory for skill file (default: .claude/skills/code-explainer)",
+)
+def install_skill(skill_dir):
+    """Install the code-explainer skill file for Claude Code."""
+    from pathlib import Path
+
+    from .skill import get_skill_content
+
+    if skill_dir:
+        target_dir = Path(skill_dir)
+    else:
+        target_dir = Path.cwd() / ".claude" / "skills" / "code-explainer"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_file = target_dir / "SKILL.md"
+
+    target_file.write_text(get_skill_content())
+    click.echo(f"Installed skill to {target_file}")
+
+
 if __name__ == "__main__":
     cli()
