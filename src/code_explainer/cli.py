@@ -22,6 +22,10 @@ from .prompts import (
     build_function_prompt,
     build_repo_prompt,
 )
+from .observations import (
+    parse_observation_requests,
+    run_observations,
+)
 from .topics import (
     add_topics,
     load_queue,
@@ -46,6 +50,12 @@ def _save_output(content: str, output_path: str) -> None:
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def _emit(ctx, text: str) -> None:
+    """Print explanation to stdout unless --quiet."""
+    if not ctx.obj.get("quiet"):
+        click.echo(text)
 
 
 def _enqueue_topics(response: str, source: str, output_dir: str) -> None:
@@ -113,9 +123,18 @@ def _find_entry_points(repo_path: str, config_content: str | None) -> list[str]:
 
 @click.group()
 @click.version_option()
-def cli():
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress explanation output to stdout (still saves to file)",
+)
+@click.pass_context
+def cli(ctx, quiet):
     """AI-powered code explanation tool."""
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["quiet"] = quiet
 
 
 @cli.command()
@@ -140,7 +159,8 @@ def cli():
     default=".",
     help="Repository root (default: current directory)",
 )
-def file(file_path, model, output_dir, repo):
+@click.pass_context
+def file(ctx, file_path, model, output_dir, repo):
     """Explain a file's purpose, structure, and key patterns."""
     if not check_model_available(model):
         click.echo(f"Error: Model '{model}' CLI not available", err=True)
@@ -185,7 +205,7 @@ def file(file_path, model, output_dir, repo):
     # Enqueue follow-up topics
     _enqueue_topics(result, source=f"file:{rel_path}", output_dir=output_dir)
 
-    click.echo(result)
+    _emit(ctx, result)
 
 
 @cli.command()
@@ -210,7 +230,8 @@ def file(file_path, model, output_dir, repo):
     default=".",
     help="Repository root (default: current directory)",
 )
-def function(target, model, output_dir, repo):
+@click.pass_context
+def function(ctx, target, model, output_dir, repo):
     """
     Explain a specific function or class.
 
@@ -275,7 +296,7 @@ def function(target, model, output_dir, repo):
     # Enqueue follow-up topics
     _enqueue_topics(result, source=f"function:{rel_path}:{symbol_name}", output_dir=output_dir)
 
-    click.echo(result)
+    _emit(ctx, result)
 
 
 @cli.command()
@@ -297,7 +318,8 @@ def function(target, model, output_dir, repo):
     default="./explanations",
     help="Output directory (default: ./explanations/)",
 )
-def repo(repo_path, model, output_dir):
+@click.pass_context
+def repo(ctx, repo_path, model, output_dir):
     """Generate a high-level repository architecture overview."""
     if not check_model_available(model):
         click.echo(f"Error: Model '{model}' CLI not available", err=True)
@@ -348,7 +370,7 @@ def repo(repo_path, model, output_dir):
     # Enqueue follow-up topics
     _enqueue_topics(result, source="repo-overview", output_dir=output_dir)
 
-    click.echo(result)
+    _emit(ctx, result)
 
 
 @cli.command()
@@ -383,7 +405,8 @@ def repo(repo_path, model, output_dir):
     default="./explanations",
     help="Output directory (default: ./explanations/)",
 )
-def diff(branch, base, repo, model, output_dir):
+@click.pass_context
+def diff(ctx, branch, base, repo, model, output_dir):
     """Explain what changed in a diff and why."""
     if not check_model_available(model):
         click.echo(f"Error: Model '{model}' CLI not available", err=True)
@@ -445,7 +468,7 @@ def diff(branch, base, repo, model, output_dir):
     # Enqueue follow-up topics
     _enqueue_topics(result, source=f"diff:{diff_label}", output_dir=output_dir)
 
-    click.echo(result)
+    _emit(ctx, result)
 
 
 @cli.command()
@@ -526,7 +549,8 @@ def topics(output_dir, show_all):
     default=False,
     help="Skip the next topic instead of explaining it",
 )
-def next_topic(model, output_dir, repo, skip):
+@click.pass_context
+def next_topic(ctx, model, output_dir, repo, skip):
     """Explain the next topic in the exploration queue."""
     if skip:
         if skip_topic(output_dir, 0):
@@ -556,15 +580,15 @@ def next_topic(model, output_dir, repo, skip):
 
     # Dispatch based on topic kind
     if topic.kind == "file":
-        _run_file_topic(topic, model, output_dir, abs_repo)
+        _run_file_topic(ctx, topic, model, output_dir, abs_repo)
     elif topic.kind == "function":
-        _run_function_topic(topic, model, output_dir, abs_repo)
+        _run_function_topic(ctx, topic, model, output_dir, abs_repo)
     elif topic.kind == "repo":
-        _run_repo_topic(topic, model, output_dir, abs_repo)
+        _run_repo_topic(ctx, topic, model, output_dir, abs_repo)
     elif topic.kind == "diff":
-        _run_diff_topic(topic, model, output_dir, abs_repo)
+        _run_diff_topic(ctx, topic, model, output_dir, abs_repo)
     elif topic.kind == "general":
-        _run_general_topic(topic, model, output_dir, abs_repo)
+        _run_general_topic(ctx, topic, model, output_dir, abs_repo)
     else:
         click.echo(f"Unknown topic kind: {topic.kind}", err=True)
         sys.exit(1)
@@ -576,7 +600,7 @@ def next_topic(model, output_dir, repo, skip):
         click.echo("\nNo more topics. Exploration complete.", err=True)
 
 
-def _run_file_topic(topic, model, output_dir, repo_path):
+def _run_file_topic(ctx, topic, model, output_dir, repo_path):
     """Handle a file exploration topic."""
     # Target is a file path, possibly relative to repo
     file_path = topic.target
@@ -620,10 +644,10 @@ def _run_file_topic(topic, model, output_dir, repo_path):
     click.echo(f"Saved to {output_path}", err=True)
 
     _enqueue_topics(result, source=f"file:{rel_path}", output_dir=output_dir)
-    click.echo(result)
+    _emit(ctx, result)
 
 
-def _run_function_topic(topic, model, output_dir, repo_path):
+def _run_function_topic(ctx, topic, model, output_dir, repo_path):
     """Handle a function exploration topic."""
     # Target should be file:symbol
     if ":" not in topic.target:
@@ -671,10 +695,10 @@ def _run_function_topic(topic, model, output_dir, repo_path):
     click.echo(f"Saved to {output_path}", err=True)
 
     _enqueue_topics(result, source=f"function:{rel_path}:{symbol_name}", output_dir=output_dir)
-    click.echo(result)
+    _emit(ctx, result)
 
 
-def _run_repo_topic(topic, model, output_dir, repo_path):
+def _run_repo_topic(ctx, topic, model, output_dir, repo_path):
     """Handle a repo exploration topic."""
     # For repo topics, target might be a subdirectory or the whole repo
     target_path = os.path.join(repo_path, topic.target) if topic.target != "." else repo_path
@@ -710,10 +734,10 @@ def _run_repo_topic(topic, model, output_dir, repo_path):
     click.echo(f"Saved to {output_path}", err=True)
 
     _enqueue_topics(result, source="repo-overview", output_dir=output_dir)
-    click.echo(result)
+    _emit(ctx, result)
 
 
-def _run_diff_topic(topic, model, output_dir, repo_path):
+def _run_diff_topic(ctx, topic, model, output_dir, repo_path):
     """Handle a diff exploration topic."""
     if not check_model_available(model):
         click.echo(f"Error: Model '{model}' CLI not available", err=True)
@@ -757,55 +781,80 @@ def _run_diff_topic(topic, model, output_dir, repo_path):
     click.echo(f"Saved to {output_path}", err=True)
 
     _enqueue_topics(result, source=f"diff:{topic.target}", output_dir=output_dir)
-    click.echo(result)
+    _emit(ctx, result)
 
 
-def _run_general_topic(topic, model, output_dir, repo_path):
-    """Handle a general exploration topic — uses repo context + the topic question."""
+def _run_general_topic(ctx, topic, model, output_dir, repo_path):
+    """Handle a general exploration topic using observe-then-explain."""
     if not check_model_available(model):
         click.echo(f"Error: Model '{model}' CLI not available", err=True)
         sys.exit(1)
 
-    tree = get_repo_structure(repo_path, max_depth=3)
-    config_name, config_content = _find_project_config(repo_path)
-
     from .prompts import TOPICS_INSTRUCTIONS
+    from .prompts.observe import build_observe_prompt
 
-    prompt = "\n".join([
+    # Phase 1: Observe — ask the model what it needs to see
+    tree = get_repo_structure(repo_path, max_depth=2)
+    observe_prompt = build_observe_prompt(question=topic.title, tree=tree)
+
+    click.echo(f"Gathering observations with {model}...", err=True)
+    try:
+        observe_response = asyncio.run(explain(observe_prompt, model))
+    except Exception as e:
+        click.echo(f"Error during observe: {e}", err=True)
+        sys.exit(1)
+
+    requested_obs = parse_observation_requests(observe_response)
+
+    # Phase 2: Run observations
+    obs_results = {}
+    if requested_obs:
+        click.echo(f"Running {len(requested_obs)} observation(s):", err=True)
+        for obs in requested_obs:
+            click.echo(f"  - {obs.get('tool')}: {obs.get('name')}", err=True)
+        obs_results = asyncio.run(run_observations(requested_obs, repo_path))
+
+        failed = [n for n, r in obs_results.items() if isinstance(r, dict) and "error" in r]
+        if failed:
+            click.echo(f"  ({len(failed)} failed)", err=True)
+    else:
+        click.echo("No observations requested.", err=True)
+
+    # Phase 3: Explain — now with targeted context
+    import json
+
+    explain_sections = [
         "You are a senior software engineer explaining a codebase to a new team member.",
         f"The reader wants to understand: **{topic.title}**",
         "",
-        "## Repository Structure",
-        "",
-        "```",
-        tree,
-        "```",
-        "",
-    ])
+    ]
 
-    if config_content:
-        prompt += "\n".join([
-            "## Project Configuration",
+    if obs_results:
+        explain_sections.extend([
+            "## Observations",
             "",
-            "```",
-            config_content,
+            "The following information was gathered from the codebase:",
+            "",
+            "```json",
+            json.dumps(obs_results, indent=2, default=str),
             "```",
             "",
         ])
 
-    prompt += "\n".join([
-        "",
+    explain_sections.extend([
         "## Instructions",
         "",
-        f"Explain **{topic.title}** in the context of this codebase.",
-        "Reference specific files, modules, and patterns.",
-        "If you can identify the relevant source files, include key code snippets.",
+        f"Explain **{topic.title}** based on the observations above.",
+        "Reference specific files, functions, and line numbers from the observations.",
+        "If the observations are insufficient, say what's missing.",
         "",
         "Format your response as markdown.",
         TOPICS_INSTRUCTIONS,
     ])
 
-    click.echo(f"Running {model}...", err=True)
+    prompt = "\n".join(explain_sections)
+
+    click.echo(f"Explaining with {model}...", err=True)
     try:
         result = asyncio.run(explain(prompt, model))
     except Exception as e:
@@ -818,7 +867,7 @@ def _run_general_topic(topic, model, output_dir, repo_path):
     click.echo(f"Saved to {output_path}", err=True)
 
     _enqueue_topics(result, source=f"general:{topic.target}", output_dir=output_dir)
-    click.echo(result)
+    _emit(ctx, result)
 
 
 @cli.command("install-skill")
