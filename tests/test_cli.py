@@ -14,6 +14,7 @@ from code_explainer.topics import (
     load_queue,
     parse_topics_from_response,
     pending_count,
+    pop_at,
     pop_next,
     save_queue,
     skip_topic,
@@ -399,3 +400,65 @@ def test_next_skip():
         queue = load_queue(tmpdir)
         assert queue[0].status == "skipped"
         assert queue[1].status == "pending"
+
+
+def test_pop_at():
+    """Pop at index selects a specific pending topic."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        topics = [
+            Topic(title="First", kind="file", target="a.py"),
+            Topic(title="Second", kind="function", target="b.py:run"),
+            Topic(title="Third", kind="general", target="architecture"),
+        ]
+        save_queue(tmpdir, topics)
+
+        # Pick the second topic (index 1)
+        topic = pop_at(tmpdir, 1)
+        assert topic is not None
+        assert topic.target == "b.py:run"
+        assert topic.status == "done"
+
+        # Queue should have first and third still pending
+        queue = load_queue(tmpdir)
+        assert queue[0].status == "pending"
+        assert queue[1].status == "done"
+        assert queue[2].status == "pending"
+
+        # Out of bounds returns None
+        assert pop_at(tmpdir, 5) is None
+        assert pop_at(tmpdir, -1) is None
+
+
+def test_pick_help():
+    """Pick command shows help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["pick", "--help"])
+    assert result.exit_code == 0
+    assert "Pick a topic" in result.output
+
+
+def test_pick_no_index_lists_topics():
+    """Pick with no index lists pending topics."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        topics = [
+            Topic(title="Executor module", kind="file", target="src/executor.py"),
+            Topic(title="Router logic", kind="function", target="src/router.py:route"),
+        ]
+        save_queue(tmpdir, topics)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["pick", "-d", tmpdir])
+        assert result.exit_code == 0
+        assert "0." in result.output
+        assert "1." in result.output
+        assert "src/executor.py" in result.output
+        assert "src/router.py:route" in result.output
+
+
+def test_pick_empty_queue():
+    """Pick with empty queue shows message."""
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = runner.invoke(cli, ["pick", "-d", tmpdir])
+        assert result.exit_code == 0
+        assert "No pending topics" in result.output

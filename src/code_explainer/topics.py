@@ -91,6 +91,20 @@ def pop_next(output_dir: str) -> Topic | None:
     return None
 
 
+def pop_at(output_dir: str, index: int) -> Topic | None:
+    """Get a pending topic by index and mark it as done.
+
+    Returns None if index is out of bounds.
+    """
+    queue = load_queue(output_dir)
+    pending = [i for i, t in enumerate(queue) if t.status == "pending"]
+    if index < 0 or index >= len(pending):
+        return None
+    queue[pending[index]].status = "done"
+    save_queue(output_dir, queue)
+    return queue[pending[index]]
+
+
 def skip_topic(output_dir: str, index: int) -> bool:
     """Mark a topic as skipped by its index in the queue."""
     queue = load_queue(output_dir)

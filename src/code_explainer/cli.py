@@ -31,6 +31,7 @@ from .topics import (
     load_queue,
     parse_topics_from_response,
     pending_count,
+    pop_at,
     pop_next,
     skip_topic,
 )
@@ -868,6 +869,81 @@ def _run_general_topic(ctx, topic, model, output_dir, repo_path):
 
     _enqueue_topics(result, source=f"general:{topic.target}", output_dir=output_dir)
     _emit(ctx, result)
+
+
+@cli.command()
+@click.argument("index", type=int, required=False, default=None)
+@click.option(
+    "--model",
+    "-m",
+    default="claude",
+    help="Model to use (default: claude)",
+)
+@click.option(
+    "--output-dir",
+    "-d",
+    type=click.Path(),
+    default="./explanations",
+    help="Output directory (default: ./explanations/)",
+)
+@click.option(
+    "--repo",
+    "-r",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    default=".",
+    help="Repository root (default: current directory)",
+)
+@click.pass_context
+def pick(ctx, index, model, output_dir, repo):
+    """Pick a topic from the exploration queue by index.
+
+    With no INDEX, lists pending topics. With INDEX, explains that topic.
+    """
+    queue = load_queue(output_dir)
+    pending = [t for t in queue if t.status == "pending"]
+
+    if not pending:
+        click.echo("No pending topics. Run an explanation to discover topics.")
+        return
+
+    if index is None:
+        # List mode — show topics with indices
+        for i, topic in enumerate(pending):
+            click.echo(f"  {i}. [{topic.kind}] {topic.target}")
+            click.echo(f"     {topic.title}")
+        click.echo(f"\nRun `explain pick <index>` to explain a topic.")
+        return
+
+    topic = pop_at(output_dir, index)
+    if topic is None:
+        click.echo(f"Invalid index: {index} (0-{len(pending) - 1} available)", err=True)
+        sys.exit(1)
+
+    click.echo(f"Picked: [{topic.kind}] {topic.target}", err=True)
+    click.echo(f"  {topic.title}", err=True)
+    click.echo(err=True)
+
+    abs_repo = os.path.abspath(repo)
+
+    if topic.kind == "file":
+        _run_file_topic(ctx, topic, model, output_dir, abs_repo)
+    elif topic.kind == "function":
+        _run_function_topic(ctx, topic, model, output_dir, abs_repo)
+    elif topic.kind == "repo":
+        _run_repo_topic(ctx, topic, model, output_dir, abs_repo)
+    elif topic.kind == "diff":
+        _run_diff_topic(ctx, topic, model, output_dir, abs_repo)
+    elif topic.kind == "general":
+        _run_general_topic(ctx, topic, model, output_dir, abs_repo)
+    else:
+        click.echo(f"Unknown topic kind: {topic.kind}", err=True)
+        sys.exit(1)
+
+    remaining = pending_count(output_dir)
+    if remaining:
+        click.echo(f"\n{remaining} topic(s) remaining. Run `explain pick` to see topics.", err=True)
+    else:
+        click.echo("\nNo more topics. Exploration complete.", err=True)
 
 
 @cli.command("install-skill")
